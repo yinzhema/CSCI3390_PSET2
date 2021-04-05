@@ -3,6 +3,7 @@ package project_2
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.apache.spark.rdd._
+import  scala.collection.mutable.ListBuffer
 
 
 object main{
@@ -15,6 +16,7 @@ object main{
     val a: Long = (rand.nextLong %(p-1)) + 1  // a is a random number is [1,p]
     val b: Long = (rand.nextLong % p) // b is a random number in [0,p]
     val numBuckets: Long = numBuckets_in
+
 
     def convert(s: String, ind: Int): Long = {
       if(ind==0)
@@ -63,6 +65,7 @@ object main{
     }
   }
 
+
   class BJKSTSketch(bucket_in: Set[(String, Int)] ,  z_in: Int, bucket_size_in: Int) extends Serializable {
 /* A constructor that requies intialize the bucket and the z value. The bucket size is the bucket size of the sketch. */
 
@@ -77,13 +80,36 @@ object main{
     }
 
     def +(that: BJKSTSketch): BJKSTSketch = {    /* Merging two sketches */
-
+      if (z<that.z) {
+        z = that.z
+        bucket = bucket union that.bucket
+        while(bucket.size>=bucket_size_in){
+          z=z+1
+          bucket=bucket.filter(a=> a._2<z)
+        }
+      }
+      return this
     }
 
     def add_string(s: String, z_of_s: Int): BJKSTSketch = {   /* add a string to the sketch */
-
+      if(z_of_s>=z){
+        return this.+(new BJKSTSketch(s,z_of_s,this.BJKST_bucket_size))
+      }
+      return this
     }
   }
+
+  def BJKST(x: RDD[String], width: Int, trials: Int) : Double = {
+    val h = Seq.fill(trials)(new hash_function(2000000000))
+
+    def param0 = (accu1: Seq[BJKSTSketch], accu2: Seq[BJKSTSketch]) => Seq.range(0,trials).map(i => accu1(i).+(accu2(i)))
+    def param1 = (accu1: Seq[BJKSTSketch], s: String) => Seq.range(0,trials).map( i =>  accu1(i).add_string(s,h(i).zeroes(h(i).hash(s))) )
+
+    val x3 = x.aggregate(Seq.fill(trials)(new BJKSTSketch(" ",0,width)))(param1, param0)
+    val ans = x3.map(a => a.bucket.size*scala.math.pow(2,a.z.toDouble)).sortWith(_ < _)(trials/2) /* Take the median of the trials */
+    return ans
+  }
+
 
 
   def tidemark(x: RDD[String], trials: Int): Double = {
@@ -98,15 +124,26 @@ object main{
     return ans
   }
 
-
-  def BJKST(x: RDD[String], width: Int, trials: Int) : Double = {
-
-  }
-
-
   def Tug_of_War(x: RDD[String], width: Int, depth:Int) : Long = {
+    var resultList=new ListBuffer[Long]()
+    for (i<- 0 to depth-1){
+      var h = Seq.fill(width)(new four_universal_Radamacher_hash_function())
 
+      def param0 = (accu1: Seq[Int], accu2: Seq[Int]) => Seq.range(0,width).map(i => accu1(i)+accu2(i))
+      def param1 = (accu1: Seq[Int], s: String) => Seq.range(0,width).map(i => accu1(i)+h(i).hash(s).toInt)
+
+      var x3 = x.aggregate(Seq.fill(width)(0))(param1, param0).map(a=>a*a)
+      var sum = x3.reduce(_+_)
+      var length = x3.size
+      var temp=(sum/length).toLong
+      resultList += temp
+    }
+    val ans=resultList.sortWith(_ < _)(depth/2)
+    return ans
   }
+
+
+
 
 
   def exact_F0(x: RDD[String]) : Long = {
@@ -116,6 +153,9 @@ object main{
 
 
   def exact_F2(x: RDD[String]) : Long = {
+    val pairRdd = x.map(a =>(a,1))
+    val ans = pairRdd.reduceByKey(_+_).map(x=>x._2*x._2).sum.toLong
+    return ans
 
   }
 
@@ -209,4 +249,5 @@ object main{
 
   }
 }
+
 
